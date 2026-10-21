@@ -1,19 +1,23 @@
 
+# Step 39: Customer Cancellation Intelligence
+# Streamlit Frontend connected to Render FastAPI Backend
+
 import os
-import joblib
+import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="Customer Churn Intelligence",
+    page_title="Customer Cancellation Intelligence",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-MODEL_PATH = "customer_churn_model.joblib"
+# ---------------- CONFIGURATION ----------------
+API_URL = "https://customer-cancellation-balanced-2.onrender.com/predict"
 DATA_PATH = "Customer_Cancellations_Training.csv"
 
 # ---------------- PROFESSIONAL THEME ----------------
@@ -120,63 +124,68 @@ div.stFormSubmitButton > button:hover {
 """, unsafe_allow_html=True)
 
 
-# ---------------- LOAD MODEL AND TRAINING DATA ----------------
-@st.cache_resource
-def load_model():
-    return joblib.load(MODEL_PATH)
-
+# ---------------- LOAD TRAINING DATA ----------------
+# CSV is only used for input options and default values.
+# The prediction model runs on the Render backend.
 
 @st.cache_data
 def load_data():
     return pd.read_csv(DATA_PATH)
 
 
-if not os.path.exists(MODEL_PATH):
-    st.error(
-        f"Model file not found: {MODEL_PATH}. "
-        "Run the model-saving notebook cell first."
-    )
-    st.stop()
-
 if not os.path.exists(DATA_PATH):
     st.error(
         f"Training dataset not found: {DATA_PATH}. "
-        "Place the CSV in the app's working directory."
+        "Ensure the CSV exists in the Streamlit GitHub repository."
     )
     st.stop()
 
 try:
-    model = load_model()
     data = load_data()
 except Exception as error:
-    st.error(f"Could not load the model or dataset: {error}")
+    st.error(f"Could not load training dataset: {error}")
+    st.stop()
+
+
+# ---------------- VALIDATE DATASET ----------------
+required_data_columns = [
+    "Territory",
+    "DeviceType",
+    "PlanType",
+    "Promotion",
+    "StartMonth",
+    "StartWeek",
+    "CustomerTenure",
+    "BaseFee",
+    "AdditionalFeatureSpend",
+    "CurrentPeriodUsage",
+    "PriorPeriodUsage",
+    "NumberOfPenalties",
+    "ServiceTickets",
+    "ServiceRating"
+]
+
+missing_columns = [
+    col for col in required_data_columns
+    if col not in data.columns
+]
+
+if missing_columns:
+    st.error(f"Dataset is missing columns: {missing_columns}")
     st.stop()
 
 
 # ---------------- INPUT OPTIONS ----------------
-required_data_columns = [
-    "Territory", "DeviceType", "PlanType", "StartMonth", "StartWeek",
-    "CustomerTenure", "BaseFee", "AdditionalFeatureSpend",
-    "CurrentPeriodUsage", "PriorPeriodUsage", "NumberOfPenalties",
-    "ServiceTickets", "ServiceRating"
-]
-
-missing_columns = [
-    col for col in required_data_columns if col not in data.columns
-]
-
-if missing_columns:
-    st.error(f"Dataset is missing required columns: {missing_columns}")
-    st.stop()
-
 territories = sorted(data["Territory"].dropna().unique().tolist())
 device_types = sorted(data["DeviceType"].dropna().unique().tolist())
 plan_types = sorted(data["PlanType"].dropna().unique().tolist())
+promotion_options = sorted(data["Promotion"].dropna().unique().tolist())
 
 months = sorted(
     data["StartMonth"].dropna().unique().tolist(),
     key=lambda x: pd.to_datetime(str(x), format="%b").month
 )
+
 weeks = sorted(
     data["StartWeek"].dropna().unique().tolist(),
     key=lambda x: int(str(x)[1:])
@@ -184,43 +193,57 @@ weeks = sorted(
 
 
 def median_value(column):
-    return float(data[column].median())
+    value = data[column].median()
+
+    if pd.isna(value):
+        return 0.0
+
+    return float(value)
 
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.markdown("## 📊 Churn Intelligence")
+    st.markdown("## 📊 Cancellation Intelligence")
     st.caption("Customer Analytics | ML Prediction")
     st.divider()
+
     st.markdown("### About this tool")
     st.write(
-        "Estimate customer churn using the trained machine learning "
-        "pipeline and customer service, usage and plan information."
+        "Estimate customer cancellation probability using a "
+        "machine learning model served through a FastAPI backend."
     )
+
     st.divider()
-    st.markdown("**Model status**")
-    st.success("Saved model loaded")
+    st.markdown("**Frontend**")
+    st.success("Streamlit application")
+
+    st.markdown("**Prediction backend**")
+    st.caption("FastAPI deployed on Render")
+
     st.markdown("**Input source**")
-    st.caption("Categories are taken from the training dataset.")
+    st.caption("Training dataset provides categories and defaults.")
 
 
 # ---------------- HEADER ----------------
 st.markdown("""
 <div class="hero">
-    <h1>Customer Churn Intelligence</h1>
-    <p>Customer retention analytics • Machine learning predictions •
-    Decision support dashboard</p>
+    <h1>Customer Cancellation Intelligence</h1>
+    <p>
+        Customer retention analytics • Machine learning predictions •
+        Decision support dashboard
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
 st.markdown(
-    "Enter the customer's details below to estimate churn probability. "
-    "Fields and categories follow the project training data."
+    "Enter the customer's details below to estimate cancellation "
+    "probability. The prediction is processed by the deployed Render API."
 )
 
 
 # ---------------- INPUT FORM ----------------
 with st.form("customer_form"):
+
     st.markdown("### 01 · Customer & Subscription")
 
     c1, c2, c3 = st.columns(3)
@@ -231,10 +254,6 @@ with st.form("customer_form"):
         plan = st.selectbox("Plan Type", plan_types)
 
     with c2:
-        promotion_options = sorted(
-            data["Promotion"].dropna().unique().tolist()
-        ) if "Promotion" in data.columns else ["no", "yes"]
-
         promotion = st.selectbox("Promotion", promotion_options)
         month = st.selectbox("Start Month", months)
         week = st.selectbox("Start Week", weeks)
@@ -246,33 +265,37 @@ with st.form("customer_form"):
             value=max(0, int(median_value("CustomerTenure"))),
             step=1
         )
+
         base_fee = st.number_input(
             "Base Fee",
             min_value=0.0,
-            value=median_value("BaseFee"),
+            value=max(0.0, median_value("BaseFee")),
             step=1.0
         )
+
         extra_spend = st.number_input(
             "Additional Feature Spend",
             min_value=0.0,
-            value=median_value("AdditionalFeatureSpend"),
+            value=max(0.0, median_value("AdditionalFeatureSpend")),
             step=1.0
         )
 
     st.markdown("### 02 · Usage & Service Experience")
+
     a1, a2, a3 = st.columns(3)
 
     with a1:
         current_usage = st.number_input(
             "Current Period Usage",
             min_value=0.0,
-            value=median_value("CurrentPeriodUsage"),
+            value=max(0.0, median_value("CurrentPeriodUsage")),
             step=1.0
         )
+
         prior_usage = st.number_input(
             "Prior Period Usage",
             min_value=0.0,
-            value=median_value("PriorPeriodUsage"),
+            value=max(0.0, median_value("PriorPeriodUsage")),
             step=1.0
         )
 
@@ -283,6 +306,7 @@ with st.form("customer_form"):
             value=max(0, int(median_value("NumberOfPenalties"))),
             step=1
         )
+
         tickets = st.number_input(
             "Service Tickets",
             min_value=0,
@@ -294,34 +318,157 @@ with st.form("customer_form"):
         rating = st.number_input(
             "Service Rating",
             min_value=0.0,
-            value=median_value("ServiceRating"),
+            value=max(0.0, median_value("ServiceRating")),
             step=0.5
         )
 
     submitted = st.form_submit_button(
-        "🔍  ANALYZE CUSTOMER CHURN",
+        "🔍 ANALYZE CUSTOMER CANCELLATION",
         use_container_width=True
     )
 
 
-# ---------------- PREDICTION ----------------
+# ---------------- PREDICTION VIA RENDER API ----------------
 if submitted:
     try:
+        # Convert the month and week to numeric features.
         month_number = int(
             pd.to_datetime(str(month), format="%b").month
         )
         week_number = int(str(week)[1:])
 
-        # Step 20: Feature engineering
+        # Feature engineering for the fields expected by the API.
         usage_difference = current_usage - prior_usage
 
         additional_spend_ratio = (
-            extra_spend / base_fee if base_fee != 0 else np.nan
+            extra_spend / base_fee if base_fee != 0 else 0.0
         )
 
         total_spend = base_fee + extra_spend
 
-        # Step 21C: Binning features
+        # Send the 17 expected input fields to FastAPI.
+        # The backend calculates the additional engineered features.
+        payload = {
+            "Territory": str(territory),
+            "DeviceType": str(device),
+            "Promotion": str(promotion),
+            "PlanType": str(plan),
+            "BaseFee": float(base_fee),
+            "AdditionalFeatureSpend": float(extra_spend),
+            "NumberOfPenalties": int(penalties),
+            "CurrentPeriodUsage": float(current_usage),
+            "PriorPeriodUsage": float(prior_usage),
+            "ServiceRating": float(rating),
+            "ServiceTickets": int(tickets),
+            "CustomerTenure": int(tenure),
+            "UsageDifference": float(usage_difference),
+            "AdditionalSpendRatio": float(additional_spend_ratio),
+            "TotalSpend": float(total_spend),
+            "StartMonthNumber": month_number,
+            "StartWeekNumber": week_number
+        }
+
+        with st.spinner("Connecting to Render and analyzing customer..."):
+            response = requests.post(
+                API_URL,
+                json=payload,
+                timeout=90
+            )
+
+        # Handle backend errors.
+        if response.status_code != 200:
+            st.error(
+                f"Backend returned HTTP {response.status_code}."
+            )
+            st.code(response.text)
+            st.stop()
+
+        result = response.json()
+
+        if (
+            "cancellation_prediction" not in result
+            or "cancellation_probability" not in result
+        ):
+            st.error("The backend response is missing expected fields.")
+            st.json(result)
+            st.stop()
+
+        prediction_label = str(result["cancellation_prediction"])
+        probability = float(result["cancellation_probability"])
+
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError(
+                "Backend probability must be between 0 and 1."
+            )
+
+        prediction_label_normalized = prediction_label.strip().lower()
+
+        if prediction_label_normalized in ("yes", "1", "true"):
+            prediction = 1
+            outcome = "Cancellation Predicted"
+        elif prediction_label_normalized in ("no", "0", "false"):
+            prediction = 0
+            outcome = "No Cancellation Predicted"
+        else:
+            raise ValueError(
+                f"Unexpected prediction label: {prediction_label}"
+            )
+
+        # ---------------- RESULTS ----------------
+        st.markdown("---")
+        st.markdown("## Prediction Results")
+
+        r1, r2, r3 = st.columns(3)
+
+        with r1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">PREDICTED OUTCOME</div>
+                <div class="metric-value">{outcome}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with r2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">CANCELLATION PROBABILITY</div>
+                <div class="metric-value">{probability:.1%}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with r3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">CUSTOMER TENURE</div>
+                <div class="metric-value">{tenure} units</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("### Cancellation Probability")
+        st.progress(min(max(probability, 0.0), 1.0))
+
+        st.caption(
+            "This is the model's estimated likelihood, not a guarantee "
+            "of future customer behaviour."
+        )
+
+        if prediction == 1:
+            st.warning(
+                "The model predicts cancellation for this input. "
+                "Consider reviewing the customer's service experience "
+                "and available retention options."
+            )
+        else:
+            st.success(
+                "The model predicts no cancellation for this input. "
+                "Continue normal customer monitoring and service support."
+            )
+
+        # ---------------- CUSTOMER SUMMARY ----------------
+        st.markdown("### Customer Summary")
+
+        # These features are calculated here for reporting only.
+        # The Render backend calculates its own model features.
         penalty_level = (
             "Low (0-3)" if penalties <= 3 else "High (4+)"
         )
@@ -335,7 +482,7 @@ if submitted:
         elif 38 < base_fee <= 100:
             fee_band = ">38"
         else:
-            fee_band = np.nan
+            fee_band = "Outside defined bands"
 
         if tenure <= 60:
             tenure_group = "New"
@@ -345,145 +492,6 @@ if submitted:
             tenure_group = "Established"
         else:
             tenure_group = "Long-term"
-
-        # Step 21C: Interaction features
-        red_plan_x_penalties = (
-            int(plan == "Red Plan") * penalties
-        )
-        penalties_per_tenure = penalties / (tenure + 1)
-        tickets_per_tenure = tickets / (tenure + 1)
-
-        # Create all 23 model input features
-        customer = pd.DataFrame([{
-            "Territory": territory,
-            "DeviceType": device,
-            "Promotion": promotion,
-            "PlanType": plan,
-            "BaseFee": base_fee,
-            "AdditionalFeatureSpend": extra_spend,
-            "NumberOfPenalties": penalties,
-            "CurrentPeriodUsage": current_usage,
-            "PriorPeriodUsage": prior_usage,
-            "ServiceRating": rating,
-            "ServiceTickets": tickets,
-            "CustomerTenure": tenure,
-            "UsageDifference": usage_difference,
-            "AdditionalSpendRatio": additional_spend_ratio,
-            "TotalSpend": total_spend,
-            "StartMonthNumber": month_number,
-            "StartWeekNumber": week_number,
-            "PenaltyLevel": penalty_level,
-            "FeeBand": fee_band,
-            "TenureGroup": tenure_group,
-            "RedPlan_x_Penalties": red_plan_x_penalties,
-            "Penalties_per_Tenure": penalties_per_tenure,
-            "Tickets_per_Tenure": tickets_per_tenure
-        }])
-
-        # Match the saved model's expected feature order
-        expected_features = [
-            "Territory",
-            "DeviceType",
-            "Promotion",
-            "PlanType",
-            "BaseFee",
-            "AdditionalFeatureSpend",
-            "NumberOfPenalties",
-            "CurrentPeriodUsage",
-            "PriorPeriodUsage",
-            "ServiceRating",
-            "ServiceTickets",
-            "CustomerTenure",
-            "UsageDifference",
-            "AdditionalSpendRatio",
-            "TotalSpend",
-            "StartMonthNumber",
-            "StartWeekNumber",
-            "PenaltyLevel",
-            "FeeBand",
-            "TenureGroup",
-            "RedPlan_x_Penalties",
-            "Penalties_per_Tenure",
-            "Tickets_per_Tenure"
-        ]
-
-        customer = customer[expected_features]
-
-        with st.spinner("Analyzing customer data..."):
-            prediction = int(model.predict(customer)[0])
-
-            if hasattr(model, "predict_proba"):
-                probabilities = model.predict_proba(customer)[0]
-                classes = list(model.classes_)
-
-                if 1 not in classes:
-                    raise ValueError(
-                        "The saved model does not contain class 1 "
-                        "for churn prediction."
-                    )
-
-                positive_class_index = classes.index(1)
-                probability = float(
-                    probabilities[positive_class_index]
-                )
-            else:
-                raise ValueError(
-                    "The saved model does not support predict_proba()."
-                )
-
-        # ---------------- RESULTS ----------------
-        st.markdown("---")
-        st.markdown("## Prediction Results")
-
-        r1, r2, r3 = st.columns(3)
-
-        with r1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">PREDICTED OUTCOME</div>
-                <div class="metric-value">
-                    {"Churn" if prediction == 1 else "No Churn"}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with r2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">MODEL CHURN PROBABILITY</div>
-                <div class="metric-value">{probability:.1%}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with r3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">CUSTOMER TENURE</div>
-                <div class="metric-value">{tenure} units</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("### Churn Probability")
-        st.progress(min(max(probability, 0.0), 1.0))
-        st.caption(
-            "Probability is the model's estimated likelihood of churn; "
-            "it is not a guarantee of the customer's future behaviour."
-        )
-
-        if prediction == 1:
-            st.warning(
-                "The model predicts churn for this input. "
-                "Consider reviewing the customer's experience and "
-                "retention options before taking action."
-            )
-        else:
-            st.success(
-                "The model predicts no churn for this input. "
-                "Continue normal customer monitoring and service support."
-            )
-
-        # ---------------- CUSTOMER SUMMARY ----------------
-        st.markdown("### Customer Summary")
 
         summary = pd.DataFrame({
             "Input": [
@@ -525,7 +533,7 @@ if submitted:
                 month,
                 week,
                 penalty_level,
-                str(fee_band),
+                fee_band,
                 tenure_group
             ]
         })
@@ -537,39 +545,50 @@ if submitted:
         )
 
         # ---------------- DOWNLOAD REPORT ----------------
-        result_text = "Churn" if prediction == 1 else "No Churn"
-
         report = pd.DataFrame([{
-            "Prediction": result_text,
-            "Churn Probability (%)": round(probability * 100, 2),
+            "Prediction": outcome,
+            "Cancellation Probability (%)": round(probability * 100, 2),
             "Territory": territory,
             "DeviceType": device,
             "PlanType": plan,
             "Promotion": promotion,
             "CustomerTenure": tenure,
             "BaseFee": base_fee,
-            "AdditionalFeatureSpend": extra_spend
+            "AdditionalFeatureSpend": extra_spend,
+            "CurrentPeriodUsage": current_usage,
+            "PriorPeriodUsage": prior_usage,
+            "NumberOfPenalties": penalties,
+            "ServiceTickets": tickets,
+            "ServiceRating": rating
         }])
 
         st.download_button(
             "⬇️ Download Prediction Report (CSV)",
             data=report.to_csv(index=False).encode("utf-8"),
-            file_name="customer_churn_prediction.csv",
+            file_name="customer_cancellation_prediction.csv",
             mime="text/csv"
         )
 
+    except requests.exceptions.Timeout:
+        st.error(
+            "The Render backend timed out. It may be waking up. "
+            "Please wait and try again."
+        )
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not connect to the Render backend: {error}")
+
+    except (KeyError, ValueError, TypeError) as error:
+        st.error(f"Prediction response or data error: {error}")
+
     except Exception as error:
         st.error(f"Prediction could not be completed: {error}")
-        st.info(
-            "Check that the saved model was trained using the same "
-            "23 features, feature names, categories and preprocessing."
-        )
 
 
 # ---------------- FOOTER ----------------
 st.markdown("---")
 st.markdown(
-    '<p class="small-note">Customer Churn Intelligence · '
+    '<p class="small-note">Customer Cancellation Intelligence · '
     'Machine Learning Assessment Project · Predictions are decision '
     'support estimates, not guarantees.</p>',
     unsafe_allow_html=True
