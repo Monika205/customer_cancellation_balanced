@@ -12,7 +12,7 @@ app = FastAPI(
 )
 
 # Load the saved preprocessing and model pipeline with correct filename
-model = joblib.load("saved_models/customer_churn_model_v1.joblib")
+model = joblib.load(customer_churn_model.joblib")
 
 
 # Define the expected customer input
