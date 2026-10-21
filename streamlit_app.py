@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-MODEL_PATH = "saved_models/customer_churn_model_v1.joblib"
+MODEL_PATH = "customer_churn_model.joblib"
 DATA_PATH = "Customer_Cancellations_Training.csv"
 
 # ---------------- PROFESSIONAL THEME ----------------
