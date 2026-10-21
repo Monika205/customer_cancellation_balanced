@@ -1,4 +1,4 @@
-```python
+
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 import pandas as pd
@@ -116,4 +116,3 @@ def predict_churn(customer: CustomerData):
             probability * 100, 2
         )
     }
-```
